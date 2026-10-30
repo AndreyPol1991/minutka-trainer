@@ -1,0 +1,274 @@
+/* День 7 · Воскресенье. Тройной пик и постановка задачи на разработку: что сдаёт аналитик.
+   Ключ преподавателя — _dev/key/70-spec.md. */
+'use strict';
+(function () {
+  const TR = window.TR, ui = TR.ui, esc = TR.esc;
+  const ID = 'spec';
+
+  document.head.insertAdjacentHTML('beforeend', `<style>
+  .sp-ctl{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+  .sp-ctl input[type=range]{width:100%}
+  .sp-meter{display:grid;grid-template-columns:120px 1fr 90px;gap:8px;align-items:center;font-size:13px}
+  .sp-meter>div{height:16px;border-radius:6px;background:var(--surface-3);overflow:hidden}.sp-meter>div i{display:block;height:100%}
+  .sp-verdict{font:700 18px/1.3 var(--f-brand)}
+  .sp-two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start}
+  .sp-form{display:grid;gap:6px}
+  .sp-f{border:1px solid var(--border);border-radius:9px;padding:8px 10px;background:var(--surface);min-width:0}
+  .sp-f label,.sp-f .lbl{display:block;font-size:12.5px;font-weight:600;margin-bottom:4px}
+  .sp-f select{width:100%}.sp-f.ok{border-color:var(--ok);background:var(--ok-soft)}.sp-f.bad{border-color:var(--bad);background:var(--bad-soft)}
+  .sp-f .chk{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:13px}
+  .sp-doc{border:1px solid var(--border-strong);border-radius:12px;padding:14px 16px;background:var(--surface-2);font-size:13.5px;position:sticky;top:70px;max-height:80vh;overflow:auto}
+  .sp-doc h4{margin:10px 0 2px;font-size:13px}.sp-doc h4:first-child{margin-top:0}.sp-doc p{margin:0}
+  .sp-doc .gap{color:var(--warn)}
+  @media (max-width:860px){.sp-two{grid-template-columns:minmax(0,1fr)}.sp-doc{position:static;max-height:none}}
+  @media (max-width:520px){.sp-meter{grid-template-columns:80px 1fr 70px}}
+  </style>`);
+
+  // =====================================================================
+  // Теория. Откуда берётся лаг
+  const howLag = {
+    id: 'how-lag', title: 'Как это работает: три причины лага и три разных лекарства', covers: ['load3'], free: true, noReset: true,
+    simple: { icon: '📈', plain: 'Лаг растёт, когда сообщений приходит больше, чем группа успевает обработать. Причин три: мало консюмеров, консюмеров уже столько, сколько партиций, или каждый обрабатывает слишком медленно. Лекарство у каждой своё.', analogy: 'Очередь в кафе растёт. Мало официантов — наймите. Официантов столько, сколько столов на раздаче, — нужны новые столы. Повар готовит каждое блюдо 10 минут — ускоряйте кухню, официанты не помогут.', tech: 'Пропускная способность группы ≈ min(консюмеры, партиции) × (1000 / время обработки сообщения, мс). Лаг — не ошибка: для пакетных читателей допустим лаг в часы. Оповещение ставят на превышение допустимого лага или на его рост, а не на «не ноль».' },
+    lead: ui.brief({ situation: 'Соседний пример: сервис рассылок читает топик заказов.', todo: ['Двигайте ползунки и найдите, что мешает успевать в каждом положении.'], look: 'Вердикт внизу называет узкое место.' }),
+    render(el, ctx) {
+      const a = ctx.ans; a.r = a.r || 300; a.p = a.p || 6; a.c = a.c || 3; a.t = a.t || 40;
+      const draw = () => {
+        const work = Math.min(a.c, a.p), cap = Math.round(work * 1000 / a.t), ok = cap >= a.r;
+        let v;
+        if (ok) v = 'Успевает. Запас — ' + Math.round((cap / a.r - 1) * 100) + ' %.';
+        else if (a.c < a.p) v = 'Узкое место — мало консюмеров: партиций хватает, рук нет. Добавить экземпляры.';
+        else if (a.t > 20) v = `Консюмеров уже ${a.c > a.p ? 'больше, чем' : 'столько же, сколько'} партиций. Но каждый тратит ${a.t} мс на сообщение — ускорять обработку (пачки, быстрее внешний вызов) или заранее увеличить партиции.`;
+        else v = 'Потолок партиций: консюмеров не добавить с пользой. Увеличивать партиции — заранее и в спокойное время.';
+        TR.$('[data-o]', el).innerHTML = `<div class="sp-meter"><span>Приходит</span><div><i style="width:${Math.min(100, a.r / Math.max(a.r, cap) * 100)}%;background:var(--info)"></i></div><b class="tnum">${a.r}/с</b></div>
+          <div class="sp-meter"><span>Успевает группа</span><div><i style="width:${Math.min(100, cap / Math.max(a.r, cap) * 100)}%;background:${ok ? 'var(--ok)' : 'var(--bad)'}"></i></div><b class="tnum">${cap}/с</b></div>
+          <p class="small">Работают ${work} из ${a.c} консюмеров${a.c > a.p ? ` (${a.c - a.p} простаивают)` : ''}.</p><p class="sp-verdict" style="color:${ok ? 'var(--ok)' : 'var(--bad)'}">${v}</p>`;
+      };
+      const sl = (k, t, min, max, step, unit) => `<label class="field"><span>${t}: <b class="tnum" data-v="${k}">${a[k]}</b>${unit || ''}</span><input type="range" min="${min}" max="${max}" step="${step}" value="${a[k]}" data-k="${k}" ${ctx.readonly ? 'disabled' : ''}></label>`;
+      el.innerHTML = `<div class="stack"><div class="sp-ctl">${sl('r', 'Приходит сообщений в секунду', 50, 1000, 50)}${sl('p', 'Партиций', 1, 24, 1)}${sl('c', 'Консюмеров', 1, 30, 1)}${sl('t', 'Время на сообщение', 5, 200, 5, ' мс')}</div><div data-o></div></div>`;
+      el.addEventListener('input', e => { const k = e.target.dataset.k; if (!k) return; a[k] = +e.target.value; TR.$(`[data-v="${k}"]`, el).textContent = a[k]; a.moved = 1; ctx.save(); draw(); ctx.ready(); });
+      draw(); if (ctx.readonly || a.moved) ctx.ready();
+    }
+  };
+
+  // =====================================================================
+  // Практика 1. Нагрузочный тест с тройным пиком
+  const GROUPS = [
+    { id: 'g1', t: 'Склад: 12 партиций, 4 экземпляра, загрузка процессора 100 %', ok: 'add' },
+    { id: 'g2', t: 'Бонусы: 12 партиций, 12 экземпляров, каждый ждёт CRM 60 мс на сообщение; CRM умеет принимать пачки', ok: 'batch' },
+    { id: 'g3', t: 'Сборка заказов: прогноз роста на год требует 18 параллельных консюмеров, партиций 12', ok: 'parts' },
+    { id: 'g4', t: 'Пуши: антифрод подключили в ту же группу консюмеров, и пуши видят только половину событий', ok: 'group' },
+    { id: 'g5', t: 'Аналитика: отстаёт на 2 часа, отчёт нужен к 9 утра', ok: 'none' }
+  ];
+  const ACTIONS = [
+    { v: 'add', t: 'Добавить экземпляры' }, { v: 'batch', t: 'Ускорить обработку: пачки в CRM' }, { v: 'parts', t: 'Увеличить число партиций заранее' },
+    { v: 'group', t: 'Вынести в свою группу консюмеров' }, { v: 'none', t: 'Ничего не делать' }
+  ];
+  const G_WHY = {
+    g1: 'партиций 12, а работают 4 — руки есть куда добавить',
+    g2: 'консюмеров уже столько же, сколько партиций; узкое место — поход в CRM',
+    g3: 'тринадцатый консюмер будет простаивать: нужен потолок выше, и поднимать его лучше в спокойное время',
+    g4: 'две разные службы в одной группе делят партиции между собой — каждая видит часть событий',
+    g5: 'лаг — не ошибка: аналитика успевает к 9 утра, тревога здесь была бы ложной'
+  };
+  const load3 = {
+    id: 'load3', title: 'Нагрузочный тест: тройной пик',
+    lead: ui.brief({ situation: 'Воскресенье. Перед новой акцией прогнали нагрузочный тест — трижды больше пятничного пика. Пять групп консюмеров, пять проблем.', todo: ['Для каждой группы выберите действие. Каждое действие подходит ровно один раз.', 'Нажмите «Проверить». Засчитывается, когда всё верно.'], look: 'Лаборатория «Три причины лага». И помните: лаг — не всегда проблема.' }),
+    blank: () => ({ m: {} }),
+    reference: () => ({ m: Object.fromEntries(GROUPS.map(g => [g.id, g.ok])) }),
+    render(el, ctx) {
+      const a = ctx.ans; a.m = a.m || {};
+      let rv = null; if (ctx.result || ctx.readonly) { rv = {}; GROUPS.forEach(g => { const v = a.m[g.id]; if (v) rv[g.id] = { s: v === g.ok ? 'ok' : 'bad', why: v !== g.ok && !ctx.readonly ? 'Подумайте: ' + G_WHY[g.id] + '.' : '' }; }); }
+      ui.match(el, { rows: GROUPS.map(g => ({ id: g.id, t: esc(g.t) })), choices: ACTIONS, value: a.m, reveal: rv, readonly: ctx.readonly, placeholder: 'Действие…', onChange: v => { a.m = v; ctx.save(); } });
+    },
+    check(ans) {
+      const m = ans.m || {}, good = GROUPS.filter(g => m[g.id] === g.ok).length;
+      const notes = GROUPS.filter(g => m[g.id] && m[g.id] !== g.ok).map(g => ({ ok: false, html: `${esc(g.t.split(':')[0])}: ${esc(G_WHY[g.id])}.` }));
+      const dup = Object.values(m).filter((v, i, arr) => arr.indexOf(v) !== i);
+      if (dup.length) notes.push({ ok: 'warn', html: 'Одно действие выбрано дважды — а каждое подходит ровно одной группе.' });
+      return { ok: good === GROUPS.length, score: good / GROUPS.length, notes, summary: `Верно ${good} из ${GROUPS.length}.`, mentor: m.g5 && m.g5 !== 'none' ? 'Аналитика отстаёт на два часа — и это нормально, ей к девяти. Будить людей из-за такого лага — путь к тому, что на настоящий алерт перестанут реагировать.' : null };
+    },
+    flags: ans => (ans.m || {}).g2 === 'add' ? ['Лечит лаг консюмерами сверх числа партиций'] : [],
+    explain: `${ui.table(['Группа', 'Действие', 'Почему'], GROUPS.map(g => [esc(g.t.split(':')[0]), esc(ACTIONS.find(x => x.v === g.ok).t), esc(G_WHY[g.id])]))}<p>Итог для постановки: мониторинг лага с <b>порогом на каждую группу</b> — склад ≤ 30 секунд, бонусы ≤ 5 минут, аналитика — успеть к 9:00.</p>`,
+    report: ans => GROUPS.map(g => `- ${g.t.split(':')[0]} → ${((ACTIONS.find(x => x.v === (ans.m || {})[g.id]) || {}).t) || '—'} ${(ans.m || {})[g.id] === g.ok ? '✓' : '✗'}`).join('\n')
+  };
+
+  // =====================================================================
+  // Практика 2. Что входит в постановку
+  const PARTS = [
+    { id: 'p1', t: 'Кто пишет, кто читает, кто владелец топика', ok: 'in' },
+    { id: 'p2', t: 'Формат события и пример', ok: 'in' },
+    { id: 'p3', t: 'Версионирование и совместимость схемы', ok: 'in' },
+    { id: 'p4', t: 'Ключ сообщения и требования к порядку', ok: 'in' },
+    { id: 'p5', t: 'Гарантия доставки', ok: 'in' },
+    { id: 'p6', t: 'Идемпотентность получателя и ключ дедупликации', ok: 'in' },
+    { id: 'p7', t: 'Обработка ошибок: повторы и DLQ', ok: 'in' },
+    { id: 'p8', t: 'Срок хранения', ok: 'in' },
+    { id: 'p9', t: 'Мониторинг лага и допустимая задержка', ok: 'in' },
+    { id: 'x1', t: 'На каком языке писать консюмер', ok: 'out', why: 'решает команда разработки, на контракт не влияет' },
+    { id: 'x2', t: 'Имя разработчика, который возьмёт задачу', ok: 'out', why: 'это планирование, а не требования' },
+    { id: 'x3', t: 'Код класса-обработчика целиком', ok: 'out', why: 'постановка говорит «что и с какими гарантиями», а не «как написать»' },
+    { id: 'x4', t: 'Цвет пуша об оплате', ok: 'out', why: 'это другая задача — для сервиса пушей и дизайнера' }
+  ];
+  const parts = {
+    id: 'parts', title: 'Что входит в постановку на интеграцию через брокер',
+    lead: ui.brief({ situation: 'Гоша: «Перед тем как писать, давай договоримся о разделах. Что разработчики должны найти в постановке, чтобы не прийти с вопросами?»', todo: ['Разложите карточки.', 'Нажмите «Проверить». Засчитывается, если ошибок не больше одной.'], look: 'Каждый раздел — ответ на вопрос, который иначе зададут в 03:12.' }),
+    blank: () => ({ v: {} }),
+    reference: () => ({ v: Object.fromEntries(PARTS.map(p => [p.id, p.ok])) }),
+    render(el, ctx) {
+      const a = ctx.ans; a.v = a.v || {};
+      let rv = null; if (ctx.result || ctx.readonly) { rv = {}; PARTS.forEach(p => { if (a.v[p.id]) rv[p.id] = a.v[p.id] === p.ok ? 'ok' : 'bad'; }); }
+      ui.sort(el, { items: PARTS.map(p => ({ id: p.id, t: esc(p.t) })), buckets: [{ id: 'in', t: 'Входит в постановку' }, { id: 'out', t: 'Не входит' }], value: a.v, reveal: rv, readonly: ctx.readonly, seed: 'sp-parts', onChange: v => { a.v = v; ctx.save(); } });
+    },
+    check(ans) {
+      const v = ans.v || {}, errs = PARTS.filter(p => v[p.id] && v[p.id] !== p.ok), empty = PARTS.filter(p => !v[p.id]).length;
+      const notes = errs.map(p => ({ ok: false, html: `«${esc(p.t)}» — ${p.ok === 'out' ? esc(p.why) : 'без этого раздела вопрос всплывёт в проде. Какой день недели был про это?'}.` }));
+      if (empty) notes.unshift({ ok: false, html: `Не разложено: ${empty}.` });
+      return { ok: errs.length <= 1 && !empty, score: (PARTS.length - errs.length - empty) / PARTS.length, notes, summary: `В постановке ${PARTS.filter(p => v[p.id] === 'in' && p.ok === 'in').length} из 9 разделов, ошибок ${errs.length}.` };
+    },
+    explain: '<p>Девять разделов — это вся неделя: понедельник (кто читает, задержка), вторник (кто пишет и кто владелец), среда (формат), четверг (ключ и порядок), пятница (гарантии, идемпотентность, хранение), суббота (ошибки, версии). Всё, что ниже уровня контракта, — решение команды.</p>',
+    report: ans => PARTS.filter(p => (ans.v || {})[p.id] === 'in').map(p => '- ' + p.t + (p.ok === 'in' ? '' : ' ✗')).join('\n') || '—'
+  };
+
+  // =====================================================================
+  // Практика 3. Постановка
+  const READERS = [{ v: 'wh', t: 'Склад' }, { v: 'disp', t: 'Диспетчерская' }, { v: 'push', t: 'Пуши' }, { v: 'bonus', t: 'Бонусы' }, { v: 'an', t: 'Аналитика' }, { v: 'pay', t: 'Оплата' }, { v: 'acc', t: 'Бухгалтерия' }];
+  const READERS_OK = ['wh', 'disp', 'push', 'bonus', 'an'];
+  const SF = [
+    { id: 'owner', t: 'Владелец топика order.events', o: ['Команда заказов', 'Команда бонусов', 'Аналитика', 'Эксплуатация'], ok: ['Команда заказов'], why: 'владеет тот, кто пишет события и отвечает за контракт' },
+    { id: 'key', t: 'Ключ сообщения', o: ['order_id', 'без ключа', 'city', 'event_id'], ok: ['order_id'], crit: true, from: 'topic', why: 'порядок внутри заказа держится на ключе order_id' },
+    { id: 'order', t: 'Требование к порядку', o: ['внутри одного заказа', 'глобальный по всему топику', 'не важен'], ok: ['внутри одного заказа'], why: 'Лене нужен порядок событий одного заказа; глобальный порядок — одна партиция и потолок в одного консюмера' },
+    { id: 'guar', t: 'Гарантия доставки', o: ['at least once + идемпотентный получатель', 'exactly once средствами Kafka', 'at most once'], ok: ['at least once + идемпотентный получатель'], crit: true, why: 'exactly once Kafka не распространяется на CRM; at most once — потери' },
+    { id: 'dedup', t: 'Ключ дедупликации у получателя', o: ['event_id', 'order_id + вид начисления', 'время события', 'не нужен'], ok: ['event_id', 'order_id + вид начисления'], crit: true, why: 'время не уникально, а без дедупликации повтор начислит дважды' },
+    { id: 'pub', t: 'Как сервис заказов публикует', o: ['outbox в транзакции заказа', 'сначала база, потом Kafka', 'сначала Kafka, потом база'], ok: ['outbox в транзакции заказа'], crit: true, why: 'два шага теряют или выдумывают события — суббота, 37 заказов' },
+    { id: 'err', t: 'Обработка ошибок', o: ['3 попытки → order.events.dlq с причиной, алерт, разбор днём', 'перезапуск до успеха', 'пропустить сообщение'], ok: ['3 попытки → order.events.dlq с причиной, алерт, разбор днём'], why: 'перезапуск — бесконечный цикл, пропуск — тихая потеря' },
+    { id: 'schema', t: 'Изменение формата', o: ['реестр схем, BACKWARD, поля только добавляем', 'предупреждать в чате', 'без версий, договоримся'], ok: ['реестр схем, BACKWARD, поля только добавляем'], why: 'чат не проверяет контракт — суббота, 03:12' },
+    { id: 'ret', t: 'Срок хранения', o: ['1 день', '7 дней', '14 дней', 'бессрочно'], ok: ['14 дней'], why: 'аналитика перечитывает две недели' },
+    { id: 'lag', t: 'Мониторинг', o: ['лаг по группам: склад ≤ 30 с, бонусы ≤ 5 мин, аналитика — к 9:00; алерт на превышение', 'алерт на любой лаг больше нуля', 'не мониторим, смотрим по жалобам'], ok: ['лаг по группам: склад ≤ 30 с, бонусы ≤ 5 мин, аналитика — к 9:00; алерт на превышение'], why: 'лаг больше нуля бывает всегда — такой алерт будет шуметь' }
+  ];
+  const fieldOk = (f, v) => f.ok.includes(v);
+  function specEval(ans) {
+    const v = ans.v || {}, r = ans.r || [];
+    const rd = new Set(r), readersOk = READERS_OK.every(x => rd.has(x)) && r.every(x => READERS_OK.includes(x));
+    const res = SF.map(f => ({ f, v: v[f.id], ok: fieldOk(f, v[f.id]) }));
+    const good = res.filter(x => x.ok).length + (readersOk ? 1 : 0), total = SF.length + 1;
+    return { res, readersOk, good, total, critBad: res.filter(x => x.f.crit && !x.ok) };
+  }
+  function specDoc(ans) {
+    const v = ans.v || {}, r = (ans.r || []).map(x => (READERS.find(y => y.v === x) || {}).t).filter(Boolean);
+    const val = id => v[id] ? esc(v[id]) : '<span class="gap">не заполнено</span>';
+    const pay = ans.ev && ans.ev.length ? '' : '';
+    return `<h4>1. Источник и читатели</h4><p>Пишет: сервис заказов. Владелец топика <code>order.events</code>: ${val('owner')}. Читают: ${r.length ? esc(r.join(', ')) : '<span class="gap">не заполнено</span>'}; у каждого своя группа консюмеров.</p>
+      <h4>2. Формат события</h4><p>События: создан, оплачен, собран, курьер назначен, передан курьеру, доставлен, отменён. Конверт: event_id, type, version, occurred_at; данные: order_id, customer_id, store_id, total, items. Без данных карты и лишних персональных данных.${pay}</p>
+      <h4>3. Версии и совместимость</h4><p>${val('schema')}.</p>
+      <h4>4. Ключ и порядок</h4><p>Ключ: ${val('key')}. Порядок: ${val('order')}. Партиций: 12, replication.factor 3, min.insync.replicas 2.</p>
+      <h4>5. Публикация</h4><p>${val('pub')}; продюсер: acks=all, enable.idempotence=true.</p>
+      <h4>6. Гарантия и идемпотентность</h4><p>Гарантия: ${val('guar')}. Ключ дедупликации у получателя: ${val('dedup')}. Офсет коммитится после обработки, автокоммит выключен.</p>
+      <h4>7. Ошибки</h4><p>${val('err')}. У DLQ есть владелец — команда-получатель.</p>
+      <h4>8. Хранение</h4><p>Срок хранения: ${val('ret')}.</p>
+      <h4>9. Мониторинг</h4><p>${val('lag')}.</p>`;
+  }
+  const spec = {
+    id: 'spec', title: 'Соберите постановку для order.events',
+    lead: ui.brief({
+      situation: 'Финал недели. Гоша: «Всё, что ты решил за неделю, — в одну постановку. Её прочитают пять команд. Если чего-то нет — спросят тебя в 03:12».',
+      todo: ['Заполните поля слева. Ключ подставлен из четверга. Справа собирается документ постановки.', 'Нажмите «Проверить». Засчитывается, когда верно хотя бы 10 полей из 11 и нет ошибок в ключе, гарантии, дедупликации и публикации.'],
+      look: 'Это и есть ответ на вопрос «что сдаёт аналитик»: не схема ради схемы, а договор, по которому пять команд строят интеграцию.'
+    }),
+    blank: () => ({ v: {}, r: [] }),
+    reference: () => ({ v: Object.fromEntries(SF.map(f => [f.id, f.ok[0]])), r: READERS_OK.slice() }),
+    render(el, ctx) {
+      const a = ctx.ans; a.v = a.v || {}; a.r = a.r || [];
+      if (!ctx.readonly && !a.v.key) {
+        const t = TR.S().stages.topic && TR.S().stages.topic.tasks && TR.S().stages.topic.tasks.key;
+        if (t && t.ans && (t.ans.q || []).length && !a.v.key) { const k = ['order_id', 'без ключа', 'city', null, 'event_id'][t.ans.q[0]]; if (k) { a.v.key = k; ctx.save(); } }
+      }
+      const judged = !!(ctx.result || ctx.readonly), ev = specEval(a);
+      el.innerHTML = `<div class="sp-two"><div class="sp-form">
+        <div class="sp-f ${judged ? (ev.readersOk ? 'ok' : 'bad') : ''}"><span class="lbl">Кто читает order.events</span><div class="chk">${READERS.map(x => `<label><input type="checkbox" data-r="${x.v}" ${a.r.includes(x.v) ? 'checked' : ''} ${ctx.readonly ? 'disabled' : ''}> ${esc(x.t)}</label>`).join('')}</div></div>
+        ${SF.map(f => { const st = judged && a.v[f.id] ? (fieldOk(f, a.v[f.id]) ? 'ok' : 'bad') : ''; return `<div class="sp-f ${st}"><label for="sp-${f.id}">${esc(f.t)}</label><select id="sp-${f.id}" data-f="${f.id}" ${ctx.readonly ? 'disabled' : ''}><option value="">Выберите…</option>${f.o.map(o => `<option ${a.v[f.id] === o ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select></div>`; }).join('')}
+      </div><div class="sp-doc" data-doc></div></div>`;
+      const dd = () => { TR.$('[data-doc]', el).innerHTML = `<div class="eyebrow">Постановка · интеграция через order.events</div>` + specDoc(a); };
+      el.addEventListener('change', e => {
+        const f = e.target.dataset.f, r = e.target.dataset.r;
+        if (f) { if (e.target.value) a.v[f] = e.target.value; else delete a.v[f]; e.target.closest('.sp-f').classList.remove('ok', 'bad'); }
+        if (r) { a.r = e.target.checked ? a.r.concat(r) : a.r.filter(x => x !== r); e.target.closest('.sp-f').classList.remove('ok', 'bad'); }
+        ctx.save(); dd();
+      });
+      dd();
+    },
+    check(ans) {
+      const ev = specEval(ans), notes = [];
+      if (!ev.readersOk) notes.push({ ok: false, html: 'Читатели: ' + ((ans.r || []).some(x => !READERS_OK.includes(x)) ? 'в списке есть те, кому события заказа не нужны потоком — вспомните карту вторника.' : 'не все подписчики отмечены.') });
+      ev.res.forEach(x => { if (!x.v) notes.push({ ok: false, html: `«${esc(x.f.t)}» не заполнено.` }); else if (!x.ok) notes.push({ ok: x.f.crit ? false : 'warn', html: `«${esc(x.f.t)}»: ${esc(x.f.why)}.` }); });
+      if (!notes.length) notes.push({ ok: true, html: 'Постановка полная: её можно отдавать пяти командам.' });
+      return { ok: ev.good >= ev.total - 1 && !ev.critBad.length, score: ev.good / ev.total, notes, summary: `Верно ${ev.good} из ${ev.total} полей.` };
+    },
+    flags: ans => { const v = ans.v || {}, f = []; if (v.guar === 'exactly once средствами Kafka') f.push('Обещает «ровно один раз» средствами брокера'); if (v.pub && v.pub !== 'outbox в транзакции заказа') f.push('Публикация двумя шагами без outbox'); return f; },
+    explain: '<p>Постановка на интеграцию через брокер — это договор. В нём нет кода и нет «как написать консюмер». Есть: кто пишет и читает, формат и правила его изменения, ключ и порядок, гарантия и кто отвечает за «ровно один раз», что делать с ошибками, сколько хранить и как понять, что всё плохо. Это и есть результат работы аналитика за неделю.</p>',
+    report: ans => specDoc(ans).replace(/<h4>/g, '\n**').replace(/<\/h4>/g, '**\n').replace(/<[^>]+>/g, '').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').trim()
+  };
+
+  // =====================================================================
+  // Практика 4. «Вы гарантируете ровно один раз?»
+  const EXACT = [
+    { t: 'Брокер гарантирует «хотя бы один раз». «Ровно один раз» для начислений обеспечивают бонусы: они узнают повтор по event_id и не начисляют дважды', ok: true, why: 'Да: честно названо, кто за что отвечает.' },
+    { t: 'Да, мы включили exactly-once в Kafka', why: 'Exactly-once в Kafka работает внутри Kafka. Начисление в CRM — внешняя система.' },
+    { t: 'Нет, иногда баллы будут начисляться дважды — это особенность брокеров', why: 'Повторы доставки будут, а двойных начислений — нет: их гасит идемпотентность.' },
+    { t: 'Да, потому что acks=all', why: 'acks=all защищает от потери при записи, а не от повторной обработки.' }
+  ];
+  const exact = {
+    id: 'exact', title: 'Лена: «Так вы гарантируете ровно один раз?»',
+    lead: ui.brief({ situation: 'На демо Лена задаёт главный вопрос недели.', todo: ['Выберите честный ответ.', 'Нажмите «Проверить».'], look: 'Пятница: что гарантирует брокер и что — получатель.' }),
+    blank: () => ({ q: [] }),
+    reference: () => ({ q: [0] }),
+    render(el, ctx) { el.innerHTML = ui.say('lena', 'Так вы гарантируете, что каждый заказ обработается ровно один раз? Мне директору нужна одна фраза.') + '<div data-q style="margin-top:12px"></div>'; ui.quiz(TR.$('[data-q]', el), { q: 'Ваш ответ Лене', options: EXACT, value: ctx.ans.q, readonly: ctx.readonly, reveal: ctx.result || ctx.readonly ? true : null, seed: 'sp-exact', onChange: v => { ctx.ans.q = v; ctx.save(); } }); },
+    check(ans) { const r = ui.quizScore({ options: EXACT }, ans.q || []); const i = (ans.q || [])[0]; return { ok: r.ok, score: r.score, notes: i != null && !EXACT[i].ok ? [{ ok: false, html: esc(EXACT[i].why) }] : [], summary: r.ok ? 'Верно.' : 'Не сходится.' }; },
+    flags: ans => { const i = (ans.q || [])[0]; return i === 1 || i === 3 ? ['Обещает бизнесу «ровно один раз», не сказав, кто за это отвечает'] : []; },
+    explain: '<p>Фраза для директора: «Ни один заказ не потеряется, и ни одни баллы не начислятся дважды. Сообщение может прийти повторно, но получатель это узнаёт». Честный ответ сильнее красивого: «exactly once» без оговорок — обещание, которое сломается при первой аварии.</p>',
+    report: ans => (ans.q || []).length ? EXACT[ans.q[0]].t : '—'
+  };
+
+  // =====================================================================
+  // Практика 5. Какие риски остались
+  const RISK_RUBRIC = [
+    'Называет компромисс порядка: повторы через retry-топик ломают порядок по ключу',
+    'DLQ без владельца и разбора — та же потеря: нужен процесс и ответственный',
+    'Лаг и алерты: пороги по группам, иначе либо шум, либо пропущенная авария',
+    'Дисциплина схем и рост: реестр схем обязателен в сборке; партиции увеличивать заранее, ключи при этом переедут',
+    'Предлагает, как каждый риск отслеживать или проверять (метрика, учение, ответственный)'
+  ];
+  const RISK_REF = 'Остаются риски. Первый — порядок: если включим retry-топик для бонусов, повтор по заказу обгонят следующие события; для бонусов это допустимо, для пушей нет — решение записано и согласовано с Леной. Второй — DLQ: без владельца она превращается в свалку, поэтому владелец — команда-получатель, разбор каждый день, алерт на любое сообщение в DLQ. Третий — лаг: пороги по группам (склад 30 секунд, бонусы 5 минут, аналитика к 9:00), алерт на превышение. Четвёртый — схемы: проверка совместимости в сборке продюсера, без неё повторим субботу. Пятый — рост: к следующему году понадобится больше 12 партиций, увеличиваем в спокойное время и заранее проверяем на стенде, что переезд ключей не ломает порядок.';
+  const risks = {
+    id: 'risks', rubric: RISK_RUBRIC, refText: RISK_REF, title: 'Какие риски остались — напишите Гоше',
+    lead: ui.brief({ situation: 'Гоша: «Неделя закончилась. Что у нас осталось хрупким? Не „всё хорошо“, а честный список — и как мы его держим под контролем».', todo: ['Напишите 5–8 предложений, от 350 символов.', 'Проверьте с Гошей или сверьте с эталоном. Засчитывается от 60 %.'], lookTitle: 'На что опереться', look: 'Суббота (retry, DLQ, схемы) и воскресенье (лаг, партиции).' }),
+    blank: () => ({ j: {} }),
+    reference: () => ({ j: { text: RISK_REF, self: RISK_RUBRIC.map(() => true) } }),
+    render(el, ctx) {
+      const j = document.createElement('div'); el.appendChild(j);
+      ui.justify(j, { id: 'sp-risks', q: 'Остаточные риски интеграции и как их контролировать', qPlain: 'После перевода интеграций сервиса доставки на Kafka (ключ order_id, at least once, идемпотентные получатели, DLQ, outbox, реестр схем) назовите остаточные риски и способы их контроля.', rubric: RISK_RUBRIC, reference: RISK_REF, value: ctx.ans.j, readonly: ctx.readonly, minLen: 350, placeholder: 'Остаются риски: …', onChange: v => { ctx.ans.j = v; ctx.save(); ctx.decide('Остаточные риски', v.text || ''); } });
+    },
+    check(ans) { const s = ui.justifyScore(ans && ans.j); return { ok: s >= 0.6, score: s, summary: s ? `Оценка ответа: ${Math.round(s * 100)} %.` : 'Напишите ответ и проверьте его.', notes: s && s < 0.6 ? [{ ok: false, html: 'Пройдитесь по субботе и воскресенью: что из решённого держится на дисциплине людей, а не на машине?' }] : [] }; },
+    explain: '<p>Сильный аналитик сдаёт не только решение, но и список того, что в нём хрупко, с владельцем и способом проверки для каждого пункта. Так риски становятся задачами, а не сюрпризами в 03:12.</p>',
+    report: ans => (ans.j && ans.j.text) ? ans.j.text : '—'
+  };
+
+  // =====================================================================
+  TR.stage({
+    id: ID, act: 3, order: 70, slot: 'Вс 12:00', title: 'Тройной пик и постановка',
+    when: 'воскресенье, 12:00 · перед новой акцией',
+    intro: [
+      { who: 'lena', html: 'В четверг новая акция. Маркетинг обещает втрое больше пятничного. Я хочу спать спокойно.' },
+      { who: 'gosha', html: 'Последний день. Прогоняем нагрузочный тест и собираем всё, что решили за неделю, в одну постановку. Её прочитают пять команд — это и есть результат твоей работы.' }
+    ],
+    facts: ['F-peak', 'F-wh30', 'F-history'],
+    glossary: [
+      { term: 'Нагрузочный тест', simple: 'Робот изображает акцию, а мы смотрим, где треснет.', tech: 'Проверка системы под заданной нагрузкой (часто с запасом к пику) для поиска узких мест до выхода в прод.' },
+      { term: 'Узкое место', simple: 'Самое медленное звено: пока его не расширишь, остальное не поможет.', tech: 'Компонент, ограничивающий пропускную способность всей цепочки (bottleneck).' },
+      { term: 'Пакетная обработка в консюмере', simple: 'Отправлять в CRM не по одному начислению, а пачкой по сто.', tech: 'Batching: объединение нескольких сообщений в один вызов внешней системы для снижения накладных расходов на каждый вызов.' },
+      { term: 'Постановка задачи', simple: 'Договор, по которому команды строят интеграцию и не приходят с вопросами ночью.', tech: 'Документ аналитика с требованиями к интеграции: участники, контракт, порядок, гарантии, обработка ошибок, хранение, мониторинг.' },
+      { term: 'Допустимый лаг', simple: 'Насколько можно отстать, чтобы бизнес не заметил.', tech: 'Порог отставания группы консюмеров, привязанный к требованию бизнеса (например, склад ≤ 30 с). Основа для оповещений.' }
+    ],
+    outro: 'Неделя закончена. У вас есть постановка, которую можно отдавать командам, и честный ответ на «ровно один раз». Откройте «Отчёт» вверху и отправьте его преподавателю — вместе с кодом работы.',
+    tasks: [howLag, load3, parts, spec, exact, risks]
+  });
+})();
