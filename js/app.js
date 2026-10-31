@@ -245,7 +245,14 @@
         ${r.notes && r.notes.length ? `<ul class="checks">${r.notes.map(n => `<li class="${n.ok === true ? '' : n.ok === false ? 'bad' : (n.ok || 'warn')}">${n.html || esc(n.t || '')}</li>`).join('')}</ul>` : ''}</div>
         ${(r.mentor || r.vera) ? ui.say('gosha', r.mentor || r.vera) : ''}`;
     }
+    // После проверки — ответы и почему так, затем разбор Гоши. И после неверной
+    // проверки тоже: ошибка уже записана, а объяснение учит больше, чем «не сходится».
     function showExplain() {
+      if (t.answers && !$('[data-answers]', card)) {
+        let items = [];
+        try { items = t.answers(TR.clone(ts.ans || t.blank())) || []; } catch (e) { console.error(e); }
+        fb.insertAdjacentHTML('beforeend', ui.answers(items));
+      }
       if (!t.explain) return;
       if ($('[data-explain]', card)) return;
       fb.insertAdjacentHTML('beforeend', `<div class="ref-box" data-explain><div class="eyebrow">Разбор Гоши</div><div class="stack">${t.explain}</div></div>`);
@@ -270,7 +277,7 @@
       TR.save();
       lastResult = r;
       showFeedback(r);
-      if (ts.done) showExplain();
+      showExplain();
       render();
       refreshFoot();
       if (!wasDone && ts.done) afterDone();
@@ -335,7 +342,7 @@
       drawRoute();
     }
     render();
-    if (ts.done && t.explain && (ts.ok || ts.revealed || TR.teacher())) showExplain();
+    if (ts.done && (t.explain || t.answers) && (ts.ok || ts.revealed || TR.teacher())) showExplain();
     if (TR.teacher() && t.reference && t.check) { /* преподаватель видит эталон по кнопке без штрафа */ }
   }
 

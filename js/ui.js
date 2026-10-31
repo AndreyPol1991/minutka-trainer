@@ -136,6 +136,53 @@
     return `<div class="http">${o.cap ? `<div class="line"><span class="eyebrow">${esc(o.cap)}</span></div>` : ''}<div class="line">${line}</div>${hdrs}${body}</div>`;
   };
 
+  // ---------- ответы и почему ----------
+  // Разбор после проверки: что выбрано, что верно и почему так.
+  // item: { q, mine, right, ok, slip, why } — q/mine/right текстом; slip (чем плох свой ответ) и why (почему верный верен) — HTML.
+  // Ошибки — сразу развёрнуты; верные — под катом, если их много.
+  ui.answers = items => {
+    if (!items || !items.length) return '';
+    const one = (x, n) => `<li class="ans ${x.ok ? 'ok' : 'bad'}">
+      <div class="ans-q"><span class="ans-n">${n}</span>${esc(x.q)}</div>
+      ${x.ok ? '' : `<div class="ans-row"><span class="ans-tag">Ваш ответ</span><span>${x.mine ? esc(x.mine) : '<span class="dim">нет ответа</span>'}</span></div>`}
+      <div class="ans-row"><span class="ans-tag ok">${x.ok ? 'Верно' : 'Правильно'}</span><span>${esc(x.right)}</span></div>
+      ${!x.ok && x.slip ? `<div class="ans-why"><b>Ваш вариант:</b> ${x.slip}</div>` : ''}
+      ${x.why ? `<div class="ans-why"><b>Почему так:</b> ${x.why}</div>` : ''}</li>`;
+    const numbered = items.map((x, i) => Object.assign({ n: i + 1 }, x));
+    const bad = numbered.filter(x => !x.ok), good = numbered.filter(x => x.ok);
+    const list = arr => `<ol class="ans-list">${arr.map(x => one(x, x.n)).join('')}</ol>`;
+    const fold = good.length > 3 && bad.length > 0;
+    return `<div class="ans-box" data-answers><div class="eyebrow">Ответы и почему</div>
+      ${bad.length ? list(bad) : ''}
+      ${good.length ? (fold ? `<details class="ans-more"><summary>Верно отвечено: ${good.length} — почему так</summary>${list(good)}</details>` : list(good)) : ''}</div>`;
+  };
+  ui.cap = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+  const optText = o => String(o.t).replace(/<[^>]+>/g, '');
+  // «Да: …» у верного варианта — подтверждение на экране; в разборе оно лишнее.
+  const becauseOf = o => o.because || String(o.why || '').replace(/^Да[.:,]\s*/, '');
+  // Вопрос с вариантами (один или несколько верных).
+  ui.quizAnswers = (q, options, value) => {
+    const sel = value || [], right = options.filter(o => o.ok);
+    const ok = ui.quizScore({ options, multi: right.length > 1 }, sel).ok;
+    const mine = sel.map(i => options[i]).filter(Boolean);
+    const slip = mine.filter(o => !o.ok).map(o => o.why).filter(Boolean).join(' ');
+    return [{ q, mine: mine.map(optText).join('; '), right: right.map(optText).join('; '), ok, slip, why: right.map(becauseOf).join(' ') }];
+  };
+  // Сопоставление: rows [{ id, t, ok (значение или список), because }], choices [{ v, t }], value { rowId: v }, slips { v: 'почему не то' }.
+  ui.matchAnswers = (rows, choices, value, slips) => rows.map(r => {
+    const okList = [].concat(r.ok), got = (value || {})[r.id];
+    const label = v => ((choices.find(c => c.v === v) || {}).t) || '';
+    const ok = got != null && okList.includes(got);
+    const said = !ok && got && slips ? (typeof slips === 'function' ? slips(r, got) : slips[got]) : '';
+    return { q: String(r.t).replace(/<[^>]+>/g, ''), mine: got ? label(got) : '', right: okList.map(label).join(' или '), ok, slip: ui.cap(String(said || '').replace(/^Не то:\s*/, '')), why: r.because || '' };
+  });
+  // Раскладка по корзинам: items [{ id, t, ok, why, because }], buckets [{ id, t }], value { itemId: bucketId }.
+  ui.sortAnswers = (items, buckets, value) => items.map(it => {
+    const got = (value || {})[it.id], label = b => ((buckets.find(x => x.id === b) || {}).t) || '';
+    const ok = got === it.ok;
+    return { q: String(it.t).replace(/<[^>]+>/g, ''), mine: got ? label(got) : '', right: label(it.ok), ok, why: ui.cap(it.because || it.why || '') };
+  });
+
   // ---------- тест с вариантами ----------
   ui.quizScore = (cfg, value) => {
     const sel = new Set(value || []);
@@ -150,14 +197,15 @@
     const order = cfg.shuffle === false ? cfg.options.map((_, i) => i) : TR.shuffle(cfg.options.map((_, i) => i), cfg.seed || cfg.q);
     function draw() {
       const rv = cfg.reveal;
-      // невыбранные верные варианты показываем только в эталоне (readonly) или по reveal: 'all' — иначе проверка выдаёт ответ
-      const full = rv && (cfg.readonly || rv === 'all');
+      // После проверки виден и невыбранный верный вариант — с объяснением, почему он верный.
+      // Подсказать ответ не страшно: неверная проверка уже записана и снижает зачёт.
+      const full = !!rv;
       el.innerHTML = `<div class="quiz">${cfg.q ? `<div class="q">${cfg.q}</div>` : ''}${cfg.multi ? '<div class="small dim">Можно выбрать несколько вариантов.</div>' : ''}
         ${order.map(i => {
           const o = cfg.options[i], on = value.includes(i);
           let cls = cfg.multi ? 'multi' : '';
           if (rv && on) cls += o.ok ? ' ok' : ' bad';
-          if (full && !on && o.ok && cfg.multi) cls += ' ok';
+          if (full && !on && o.ok) cls += ' ok';
           const why = rv && (on || (full && o.ok)) && o.why ? `<div class="why">${o.why}</div>` : '';
           return `<button type="button" class="opt ${cls}" data-i="${i}" aria-pressed="${on}" ${cfg.readonly ? 'disabled' : ''}><span class="mk"></span><span>${o.t}</span>${why}</button>`;
         }).join('')}</div>`;
